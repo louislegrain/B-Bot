@@ -1,21 +1,8 @@
-const https = require('https');
 const { Client, Intents } = require('discord.js');
 require('dotenv').config();
+const { sendMessage, apiCommand, missingPermissions } = require('./functions');
 
 const client = new Client({ intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES] });
-
-function fetch(url) {
-   return new Promise((resolve, reject) => {
-      let data = '';
-
-      https
-         .get(url, res => {
-            res.on('data', chunk => (data += chunk));
-            res.on('end', () => resolve(JSON.parse(data)));
-         })
-         .on('error', err => reject(err));
-   });
-}
 
 const prefix = '!b';
 const embedColor = '#7289DA';
@@ -29,75 +16,101 @@ const commands = {
       run: (msg, [command]) => {
          if (command) {
             if (!commands[command]) {
-               msg.channel.send(
-                  `La commande \`${prefix} ${command}\` n'existe pas.\n\`!b help\` pour voir la liste des commandes.`
+               sendMessage(
+                  `La commande \`${prefix} ${command}\` n'existe pas.\n\`!b help\` pour voir la liste des commandes.`,
+                  msg.channel
                );
                return;
             }
-            msg.channel.send(
-               `Syntaxe de la commande \`${prefix} ${command}\` :\n\`${prefix} ${commands[command].syntax}\``
+            sendMessage(
+               `Syntaxe de la commande \`${prefix} ${command}\` :\n\`${prefix} ${commands[command].syntax}\``,
+               msg.channel
             );
          } else {
-            msg.channel.send({
-               embeds: [
-                  {
-                     title: 'Liste des commandes',
-                     color: embedColor,
-                     fields: Object.entries(commands).map(([command, { description }]) => ({
-                        name: `${prefix} ${command}`,
-                        value: description,
-                     })),
-                  },
-               ],
-            });
+            const missPermissions = missingPermissions(msg, ['EMBED_LINKS']);
+            if (missPermissions) {
+               sendMessage(missPermissions, msg.channel);
+               return;
+            }
+
+            sendMessage(
+               {
+                  embeds: [
+                     {
+                        title: 'Liste des commandes',
+                        color: embedColor,
+                        fields: Object.entries(commands).map(([command, { description }]) => ({
+                           name: `${prefix} ${command}`,
+                           value: description,
+                        })),
+                     },
+                  ],
+               },
+               msg.channel
+            );
          }
       },
    },
    ping: {
       description: 'Renvoie `pong`.',
       syntax: 'ping',
-      run: msg => {
-         msg.channel.send('pong');
-      },
+      run: msg => sendMessage('pong', msg.channel),
    },
    poll: {
       description: 'Crée un sondage 📊',
       syntax: 'poll "<question>" "free-answer"|"<réponse_1?>" "<réponse_2?>"',
       run: async (msg, [question, ...answersArr]) => {
+         const missPermissions = missingPermissions(msg, [
+            'ADD_REACTIONS',
+            'READ_MESSAGE_HISTORY',
+         ]);
+         if (missPermissions) {
+            sendMessage(missPermissions, msg.channel);
+            return;
+         }
+
          if (!question) {
-            msg.channel.send(
-               `Ecrit ta commande sous la forme\n\`${prefix} ${commands.poll.syntax}\``
+            sendMessage(
+               `Ecrit ta commande sous la forme\n\`${prefix} ${commands.poll.syntax}\``,
+               msg.channel
             );
             return;
          }
 
          if (answersArr[0] === 'free-answer') {
-            msg.channel.send(
-               `**📊 ${question.replace(/\*\*/, '\\*\\*')}**\nLa réponse est libre.`
+            sendMessage(
+               `**📊 ${question.replace(/\*\*/, '\\*\\*')}**\nLa réponse est libre.`,
+               msg.channel
             );
          } else if (answersArr.length > 0) {
             if (answersArr.length > 10) {
-               msg.channel.send('Tu peux mettre maximum 10 réponses.');
+               sendMessage('Tu peux mettre maximum 10 réponses.', msg.channel);
                return;
             }
-            const poll = await msg.channel.send({
-               content: `**📊 ${question.replace(/\*\*/, '\\*\\*')}**`,
-               embeds: [
-                  {
-                     color: embedColor,
-                     description: answersArr
-                        .map((answer, i) => `\n${nbEmojis[i + 1]} ${answer}`)
-                        .join(''),
-                  },
-               ],
-            });
+            const poll = await sendMessage(
+               {
+                  content: `**📊 ${question.replace(/\*\*/, '\\*\\*')}**`,
+                  embeds: [
+                     {
+                        color: embedColor,
+                        description: answersArr
+                           .map((answer, i) => `\n${nbEmojis[i + 1]} ${answer}`)
+                           .join(''),
+                     },
+                  ],
+               },
+               msg.channel
+            );
+            if (!poll) return;
             for (let i = 0; i < answersArr.length; i++) {
                poll.react(nbEmojis[i + 1]);
             }
          } else {
-            const poll = await msg.channel.send(
-               `**📊 ${question.replace(/\*\*/, '\\*\\*')}**`
+            const poll = await sendMessage(
+               `**📊 ${question.replace(/\*\*/, '\\*\\*')}**`,
+               msg.channel
             );
+            if (!poll) return;
             poll.react('👍');
             poll.react('👎');
          }
@@ -106,101 +119,43 @@ const commands = {
    joke: {
       description: 'Génère une blague aléatoire.',
       syntax: 'joke',
-      run: async msg => {
-         msg.channel.sendTyping();
-         let success = false;
-
-         for (let i = 0; i < 2; i++) {
-            const data = await fetch('https://api.blablagues.net/?rub=blagues').catch(
-               () => null
-            );
-            if (!data) {
-               msg.channel.send('Impossible de se connecter au serveur...');
-               success = true;
-               break;
-            }
-
-            const {
-               data: { content },
-            } = data;
+      run: msg =>
+         apiCommand('https://api.blablagues.net/?rub=blagues', msg, data => {
+            const content = data?.data?.content;
 
             if (
-               content.text_head ||
-               (content.text_hidden && !content.source && !content.media && !content.embed)
+               content &&
+               (content.text_head || content.text) &&
+               !content.source &&
+               !content.media &&
+               !content.embed
             ) {
-               msg.channel.send(
-                  `${content.text_head ? `${content.text_head}\n` : ''}${
-                     content.text ? `${content.text}\n` : ''
-                  }${content.text_hidden ? `||${content.text_hidden}||` : ''}`
-               );
-               success = true;
-               break;
+               return `${content.text_head ? `${content.text_head}\n` : ''}${
+                  content.text ? `${content.text}\n` : ''
+               }${content.text_hidden ? `||${content.text_hidden}||` : ''}`;
+            } else {
+               return false;
             }
-         }
-
-         if (!success)
-            msg.channel.send(
-               "Désolé, je n'ai pas d'inspiration pour le moment...\nRéessaie dans quelques instants."
-            );
-      },
+         }),
    },
    meme: {
       description: 'Génère un meme aléatoire.',
       syntax: 'meme',
-      run: async msg => {
-         msg.channel.sendTyping();
-         let success = false;
-
-         for (let i = 0; i < 2; i++) {
-            const data = await fetch('https://meme-api.herokuapp.com/gimme').catch(() => null);
-            if (!data) {
-               msg.channel.send('Impossible de se connecter au serveur...');
-               success = true;
-               break;
-            }
-
-            if (data.url) {
-               msg.channel.send(data.url);
-               success = true;
-               break;
-            }
-         }
-
-         if (!success)
-            msg.channel.send(
-               "Désolé, je n'ai pas d'inspiration pour le moment...\nRéessaie dans quelques instants."
-            );
-      },
+      run: msg =>
+         apiCommand(
+            'https://meme-api.herokuapp.com/gimme',
+            msg,
+            ({ url }) => (url ? url : false),
+            ['EMBED_LINKS']
+         ),
    },
    activity: {
       description: 'Tu ne sais pas quoi faire ? Je vais te donner une idée...',
       syntax: 'activity',
-      run: async msg => {
-         msg.channel.sendTyping();
-         let success = false;
-
-         for (let i = 0; i < 2; i++) {
-            const data = await fetch('https://www.boredapi.com/api/activity/').catch(
-               () => null
-            );
-            if (!data) {
-               msg.channel.send('Impossible de se connecter au serveur...');
-               success = true;
-               break;
-            }
-
-            if (data.activity) {
-               msg.channel.send(data.activity);
-               success = true;
-               break;
-            }
-         }
-
-         if (!success)
-            msg.channel.send(
-               "Désolé, je n'ai pas d'inspiration pour le moment...\nRéessaie dans quelques instants."
-            );
-      },
+      run: msg =>
+         apiCommand('https://www.boredapi.com/api/activity/', msg, ({ activity }) =>
+            activity ? activity : false
+         ),
    },
 };
 
@@ -223,8 +178,9 @@ client.on('messageCreate', msg => {
    const run = commands[command]?.run;
 
    if (!param.match(/^[^" ]+ *$|^ *(?:"[^"]+" *)*$/)) {
-      msg.channel.send(
-         `La syntaxe des paramètres est mauvaise, écrit ta commande sous la forme\n\`${prefix} <commande> "<paramètre_1?>" "<paramètre_2?>"\``
+      sendMessage(
+         `La syntaxe des paramètres est mauvaise, écrit ta commande sous la forme\n\`${prefix} <commande> "<paramètre_1?>" "<paramètre_2?>"\``,
+         msg.channel
       );
       return;
    }
@@ -237,8 +193,9 @@ client.on('messageCreate', msg => {
    if (run) {
       run(msg, params);
    } else {
-      msg.channel.send(
-         "Cette commande n'existe pas.\n`!b help` pour voir la liste des commandes."
+      sendMessage(
+         "Cette commande n'existe pas.\n`!b help` pour voir la liste des commandes.",
+         msg.channel
       );
    }
 });
