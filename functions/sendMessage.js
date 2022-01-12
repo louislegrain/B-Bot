@@ -1,14 +1,18 @@
-function sendMessage(content, channel) {
-   return channel.send(content).catch(({ message }) => {
-      if (typeof content !== 'string' && message === 'Missing Permissions') {
-         return sendMessage(
-            "Je n'ai pas les permissions nécessaires pour effectuer cette action.",
-            channel
-         );
+async function sendMessage(content, channel) {
+   let result = null;
+
+   try {
+      result = await channel.send(content);
+   } catch (e) {
+      result = e;
+      if (e.code === 50013 && typeof message !== 'string') {
+         sendMessage('Il me manque des permissions pour effectuer cette action.', channel);
       } else {
-         return false;
+         console.log("Erreur lors de l'envoi du message !");
       }
-   });
+   }
+
+   return result;
 }
 
 module.exports = sendMessage;

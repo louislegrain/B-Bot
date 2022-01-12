@@ -1,4 +1,4 @@
-function turnArrayIntoText(arr) {
+module.exports = arr => {
    let result = '';
    for (let i = 0; i < arr.length; i++) {
       if (i === arr.length - 1 && arr.length > 1) {
@@ -9,6 +9,4 @@ function turnArrayIntoText(arr) {
       result += arr[i];
    }
    return result;
-}
-
-module.exports = turnArrayIntoText;
+};
